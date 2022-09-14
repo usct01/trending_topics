@@ -1,0 +1,144 @@
+#THIS FILE HAVE FUNCTIONS REQUIRED FOR TEXT ANALYSIS
+from transformers import MBartForConditionalGeneration, MBart50TokenizerFast
+model = MBartForConditionalGeneration.from_pretrained("facebook/mbart-large-50-many-to-many-mmt")
+tokenizer = MBart50TokenizerFast.from_pretrained("facebook/mbart-large-50-many-to-many-mmt")
+def trans_to_engish(texts,fromlang="ar_AR",tolang="en_XX"):
+    tokenizer.src_lang = fromlang
+    encoded_ar = tokenizer(texts, return_tensors="pt")
+    generated_tokens = model.generate(**encoded_ar,forced_bos_token_id=tokenizer.lang_code_to_id["en_XX"])
+    return(tokenizer.batch_decode(generated_tokens, skip_special_tokens=True))
+
+trans_to_engish(texts=dt.HEADLINE_ALERT_TEXT,fromlang="ar_AR",tolang="en_XX")
+
+article_ar = "إعادة-هاجل:اعادة التوازن الامريكي لمنطقة اسيا والمحيط الهادي تكتسب زخما "
+# translate Arabic to English
+tokenizer.src_lang = "ar_AR"
+encoded_ar = tokenizer(article_ar, return_tensors="pt")
+generated_tokens = model.generate(**encoded_ar,forced_bos_token_id=tokenizer.lang_code_to_id["en_XX"])
+tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+
+# ['Re-Hell: The American balance for Asia and the Pacific is gaining momentum.']
+
+
+from collections import Counter
+import numpy as np    
+from sklearn.feature_extraction.text import CountVectorizer,TfidfVectorizer,ENGLISH_STOP_WORDS
+
+remwrds = ['alert','update','news','new','results','service','buzz','page','june','front','see','thomsonreut','thomson','reuter','reuters','top','say','said','asia','europe','thompson']
+stop_words = ENGLISH_STOP_WORDS.union(remwrds)
+
+topn=10
+
+import textacy
+from textacy import preprocessing
+from gensim.parsing.preprocessing import remove_stopwords, preprocess_string,stem_text
+
+def preproc(text):
+    text=preprocessing.normalize.whitespace(preprocessing.remove.punctuation(text))
+    text=remove_stopwords(text)
+    text=stem_text(text)
+    return(text)
+
+# text=preproc(df.iloc[0].TAKE_TEXT_join)
+# text
+
+def word_count(text,topn=10):
+    text=preproc(text)
+    text=[w for w in text.strip().split() if len(w)>3]
+    result = Counter(text)
+    if len(result)<topn:
+        topn=len(result)
+    
+    return(result.most_common(topn))
+
+# word_count(text,topn=10)
+
+
+def count_vec(texts,topn=5):
+    vec = CountVectorizer(ngram_range=n_gram_range, stop_words=stop_words).fit(texts)
+    bag_of_words = vec.transform(texts)
+    sum_words = bag_of_words.sum(axis=0) 
+    words_freq = [(word, sum_words[0, idx]) for word, idx in vec.vocabulary_.items()]
+    words_freq =sorted(words_freq, key = lambda x: x[1], reverse=True)
+    return(words_freq[:topn]) 
+
+# count_vec(texts,topn=10)
+
+
+def text_vec(texts,topn=10,vectype='count'):
+    if vectype=='count':
+        vec=CountVectorizer(stop_words=stop_words)
+    elif vectype=='tfidf':
+        vec=TfidfVectorizer(stop_words=stop_words)
+    vecfit = vec.fit_transform(texts).toarray()
+    vocab = vec.vocabulary_
+    reverse_vocab = {v:k for k,v in vocab.items()}
+    feature_names = vec.get_feature_names()
+    df_vec = pd.DataFrame(vecfit, columns = feature_names)
+    idx = vecfit.argsort(axis=1)
+    vec_maxn = idx[:,-topn:]
+    df_vec['topn'] = [[reverse_vocab.get(item) for item in row] for row in vec_maxn ]
+    return(df_vec)
+
+
+def word_freq(dt,col1):
+    result = Counter(",".join(dt[col1].str.upper().dropna().values.tolist()).split())
+    return result.most_common(10)
+
+word_freq(df,'HEADLINE_ALERT_TEXT_clean')
+
+
+import spacy
+from transformers import AutoModel, AutoTokenizer
+from sklearn.metrics.pairwise import cosine_similarity
+nlp = spacy.load('en_core_web_sm')
+model_name = "distilroberta-base"
+model = AutoModel.from_pretrained(model_name)
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+def getkeywords(text,top_k = 5):
+    n_gram_range = (1, 2)
+    stop_words = "english"
+    
+    # Extract candidate words/phrases
+    count = CountVectorizer(ngram_range=n_gram_range, stop_words=stop_words).fit([text])
+    all_candidates = count.get_feature_names()
+    
+    # nlp = spacy.load('en_core_web_sm')
+    doc = nlp(text)
+    noun_phrases = set(chunk.text.strip().lower() for chunk in doc.noun_chunks)
+    nouns = set()
+    for token in doc:
+        if token.pos_ == "NOUN":
+            nouns.add(token.text)
+    
+    all_nouns = nouns.union(noun_phrases)
+    candidates = list(filter(lambda candidate: candidate in all_nouns, all_candidates))
+    
+    
+    # model_name = "distilroberta-base"
+    # model = AutoModel.from_pretrained(model_name)
+    # tokenizer = AutoTokenizer.from_pretrained(model_name)
+    
+    candidate_tokens = tokenizer(candidates, padding=True, return_tensors="pt")
+    candidate_embeddings = model(**candidate_tokens)["pooler_output"]
+    print('candidate_embeddings ',candidate_embeddings.shape)
+    candidate_embeddings = candidate_embeddings.detach().numpy()
+    
+    text_tokens = tokenizer([text], padding=True, return_tensors="pt")
+    text_embedding = model(**text_tokens)["pooler_output"]
+    text_embedding = text_embedding.detach().numpy()
+    
+    cosim = cosine_similarity(text_embedding, candidate_embeddings)
+    if len(cosim[0])<top_k:
+        top_k=len(cosim[0])
+    keywords = [candidates[index] for index in cosim.argsort()[0][-top_k:]]
+    return keywords
+
+kws={}
+for i in range(len(df)):
+    text=preproc(df.iloc[i].TAKE_TEXT_join)
+    kw=getkeywords(text,top_k = 5)
+    kws[i]=kw
+
+

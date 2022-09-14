@@ -1,0 +1,127 @@
+#THIS IS THE MAIN CODE FOR NEWS TEXT ANALYSIS
+#PLEASE RUN THE CODE text_analysis_functions
+
+import pandas as pd
+pd.options.display.max_columns = 200
+# dt=pd.read_csv('/Users/deepakm/mywork/rna/data/rna002_RTRS_2017_11_29.csv',delimiter=',',error_bad_lines=False,warn_bad_lines = True ,engine="python");dt.shape
+
+import csv
+with open('/Users/deepakm/mywork/rna/data/rna002_RTRS_2017_11_29.csv', newline='') as f:
+    reader = csv.reader(f)
+    rows=[row for row in reader]
+
+dt=pd.DataFrame(rows[1:])
+dt.columns=rows[0]
+
+dt['STORY_DATE_TIME']=pd.to_datetime(dt['STORY_DATE_TIME'])
+dt['TAKE_DATE_TIME']=pd.to_datetime(dt['TAKE_DATE_TIME'])
+
+dt['STORY_HOUR']=dt.STORY_DATE_TIME.dt.hour
+dt['TAKE_HOUR']=dt.TAKE_DATE_TIME.dt.hour
+
+dt=dt.loc[dt.EVENT_TYPE.str.upper()!='DELETE'];dt.shape
+dt=dt.loc[~(dt.HEADLINE_ALERT_TEXT.str.lower().str.contains('ignore|test'))];dt.shape
+
+dt=dt.loc[dt.LANGUAGE.str.upper()=='EN'];dt.shape
+
+
+dt.info()
+dt.nunique()
+dt.isnull().sum()
+dt.to_excel('data/RTRS_NEWS.xlsx',index=False)
+
+
+dt['HAT1']= dt['HEADLINE_ALERT_TEXT'].str.extract(r"(\w+)", expand=True)
+dt['TOPIC1']= dt['TOPICS'].str.extract(r"(\w+)", expand=True)
+
+
+
+dt['LENGTH_HEADLINE']=dt.HEADLINE_ALERT_TEXT.map(len,na_action='ignore')
+dt['LENGTH_TAKE_TEXT']=dt.TAKE_TEXT.map(len,na_action='ignore')
+dt['LENGTH_TOPICS']=dt.TOPICS.map(len,na_action='ignore')
+
+dt.describe()
+
+# some stats on key columns
+
+dt.groupby('EVENT_TYPE').nunique().T
+
+
+dt.LANGUAGE.value_counts(normalize=True).plot(kind='bar', grid=True, figsize=(16, 9))
+dt.EVENT_TYPE.value_counts(normalize=True).plot(kind='bar', grid=True, figsize=(16, 9))
+dt.DATE.value_counts(normalize=True).plot(kind='bar', grid=True, figsize=(16, 9))
+
+dt.DATE.value_counts()
+dt.TIME.value_counts()
+dt['HAT1'].value_counts()
+dt['TOPIC1'].value_counts()
+txtcols=['HEADLINE_ALERT_TEXT',	'ACCUMULATED_STORY_TEXT',	'TAKE_TEXT',	'PRODUCTS',	'TOPICS',	'RELATED_RICS','LANGUAGE']
+dt.groupby('EVENT_TYPE')[txtcols].nunique()
+
+dt['IS_UPDATE']=dt.HEADLINE_ALERT_TEXT.str.startswith('UPDATE',na=False).astype(int)
+
+# FIND STORIES WITH SAME PNAC and UPDATES
+dt.groupby('PNAC').IS_UPDATE.sum()
+
+# FIND STORIES GENERATED ON HOURLY BASIS
+dt.resample('1H', on='STORY_DATE_TIME').UNIQUE_STORY_INDEX.nunique().plot(kind='bar', grid=True, figsize=(16, 9))
+dt.resample('1H', on='STORY_DATE_TIME').PNAC.nunique().plot(kind='bar', grid=True, figsize=(16, 9))
+
+
+
+# COLLECT ALL NEWS STORIES FOR 8 HOURS TIMEFRAME
+
+df=dt.resample('8H', on='STORY_DATE_TIME').agg({'HEADLINE_ALERT_TEXT':[' '.join, 'nunique'],'TAKE_TEXT':[' '.join, 'nunique'],'PNAC':'nunique'})
+df.columns = ["_".join(x) for x in df.columns.ravel()]
+df
+df.columns
+
+df['TAKE_TEXT_clean']=df.TAKE_TEXT_join.map(preproc,na_action='ignore')
+df['HEADLINE_ALERT_TEXT_clean']=df.HEADLINE_ALERT_TEXT_join.map(preproc,na_action='ignore')
+
+
+# df['keywords_take_text']=df.TAKE_TEXT_join.map(getkeywords,na_action='ignore')
+# df['keywords_headline']=df.HEADLINE_ALERT_TEXT_join.map(getkeywords,na_action='ignore')
+
+df['top_words_take_text']=df.TAKE_TEXT_clean.map(word_count,na_action='ignore')
+
+df['top_words_headline']=df.HEADLINE_ALERT_TEXT_clean.map(word_count,na_action='ignore')
+df.to_excel('news8H.xlsx')
+
+
+
+chk=text_vec(df['HEADLINE_ALERT_TEXT_clean'],topn=10,vectype='tfidf')
+chk['topn'].to_excel('topn_tfidf.xlsx')
+chk.head(10)
+
+chk=text_vec(df['HEADLINE_ALERT_TEXT_clean'],topn=10,vectype='count')
+chk['topn'].to_excel('topn_count.xlsx')
+chk.head(10)
+
+
+chk=text_vec(df['TAKE_TEXT_clean'],topn=10,vectype='tfidf')
+chk['topn'].to_excel('topn_tfidf_taketext.xlsx')
+chk.head(10)
+
+chk=text_vec(df['TAKE_TEXT_clean'],topn=10,vectype='count')
+chk['topn'].to_excel('topn_count_taketext.xlsx')
+chk.head(10)
+
+chk=text_vec(df['HEADLINE_ALERT_TEXT_clean'],topn=10,vectype='count')
+chk['topn']
+chk.head(10)
+
+# TAKE ROW MEAN
+chk['mean'] = chk.mean(axis=1)
+chk['mean']
+
+
+from scipy.stats import zscore
+chk2=chk.drop(columns='topn')
+chk2=chk2.apply(zscore)
+chk2
+
+chk2.max(axis=1)
+chk2.idxmax(axis=1)
+
+# ********************************************************************************************************
